@@ -1,17 +1,4 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-/**
- * @title DappTorch
- * @dev A decentralized knowledge sharing platform where users can create, share, and reward educational content
- */
-contract DappTorch {
-    
-    struct Content {
-        uint256 id;
-        address creator;
-        string title;
-        string contentHash; // IPFS hash or content identifier
+IPFS hash or content identifier
         uint256 timestamp;
         uint256 upvotes;
         uint256 rewards;
@@ -158,3 +145,6 @@ contract DappTorch {
         );
     }
 }
+// 
+update
+// 

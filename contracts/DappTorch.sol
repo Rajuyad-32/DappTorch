@@ -1,150 +1,179 @@
-IPFS hash or content identifier
-        uint256 timestamp;
-        uint256 upvotes;
-        uint256 rewards;
-        bool isActive;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/**
+ * @title DappTorch
+ * @dev Registry and rating system for dApps
+ * @notice Developers register dApps; users can rate them 1–5; contract keeps aggregate stats
+ */
+contract DappTorch {
+    address public owner;
+
+    struct Dapp {
+        uint256 id;
+        address developer;
+        string  name;
+        string  url;
+        string  category;      // e.g. "defi", "nft", "game"
+        uint256 createdAt;
+        bool    isActive;
     }
-    
-    struct User {
-        address userAddress;
-        uint256 reputation;
-        uint256 totalContributions;
-        bool isRegistered;
+
+    struct RatingStats {
+        uint256 ratingCount;
+        uint256 ratingSum;     // sum of all ratings (1–5)
     }
-    
-    mapping(uint256 => Content) public contents;
-    mapping(address => User) public users;
-    mapping(uint256 => mapping(address => bool)) public hasUpvoted;
-    
-    uint256 public contentCounter;
-    uint256 public constant UPVOTE_REWARD = 1;
-    uint256 public constant CONTENT_CREATION_REWARD = 10;
-    
-    event UserRegistered(address indexed user, uint256 timestamp);
-    event ContentCreated(uint256 indexed contentId, address indexed creator, string title, uint256 timestamp);
-    event ContentUpvoted(uint256 indexed contentId, address indexed voter, uint256 timestamp);
-    event RewardSent(uint256 indexed contentId, address indexed creator, uint256 amount);
-    
-    modifier onlyRegistered() {
-        require(users[msg.sender].isRegistered, "User not registered");
+
+    uint256 public nextDappId;
+
+    // dappId => Dapp
+    mapping(uint256 => Dapp) public dapps;
+
+    // dappId => stats
+    mapping(uint256 => RatingStats) public ratings;
+
+    // user => dappId => rating given (0 = none)
+    mapping(address => mapping(uint256 => uint8)) public userRating;
+
+    // developer => dappIds[]
+    mapping(address => uint256[]) public dappsOf;
+
+    event DappRegistered(
+        uint256 indexed id,
+        address indexed developer,
+        string name,
+        string url,
+        string category,
+        uint256 timestamp
+    );
+
+    event DappStatusUpdated(
+        uint256 indexed id,
+        bool isActive,
+        uint256 timestamp
+    );
+
+    event DappRated(
+        uint256 indexed id,
+        address indexed rater,
+        uint8 rating,
+        uint256 ratingCount,
+        uint256 ratingSum
+    );
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner");
         _;
     }
-    
-    modifier contentExists(uint256 _contentId) {
-        require(_contentId > 0 && _contentId <= contentCounter, "Content does not exist");
-        require(contents[_contentId].isActive, "Content is not active");
+
+    modifier dappExists(uint256 id) {
+        require(dapps[id].developer != address(0), "Dapp not found");
         _;
     }
-    
-    /**
-     * @dev Register a new user to the platform
-     */
-    function registerUser() external {
-        require(!users[msg.sender].isRegistered, "User already registered");
-        
-        users[msg.sender] = User({
-            userAddress: msg.sender,
-            reputation: 0,
-            totalContributions: 0,
-            isRegistered: true
-        });
-        
-        emit UserRegistered(msg.sender, block.timestamp);
+
+    modifier onlyDeveloper(uint256 id) {
+        require(dapps[id].developer == msg.sender, "Not developer");
+        _;
     }
-    
+
+    constructor() {
+        owner = msg.sender;
+    }
+
     /**
-     * @dev Create new educational content
-     * @param _title Title of the content
-     * @param _contentHash IPFS hash or identifier of the content
+     * @dev Register a new dApp
      */
-    function createContent(string memory _title, string memory _contentHash) external onlyRegistered {
-        require(bytes(_title).length > 0, "Title cannot be empty");
-        require(bytes(_contentHash).length > 0, "Content hash cannot be empty");
-        
-        contentCounter++;
-        
-        contents[contentCounter] = Content({
-            id: contentCounter,
-            creator: msg.sender,
-            title: _title,
-            contentHash: _contentHash,
-            timestamp: block.timestamp,
-            upvotes: 0,
-            rewards: 0,
+    function registerDapp(
+        string calldata name,
+        string calldata url,
+        string calldata category
+    ) external returns (uint256 id) {
+        id = nextDappId++;
+
+        dapps[id] = Dapp({
+            id: id,
+            developer: msg.sender,
+            name: name,
+            url: url,
+            category: category,
+            createdAt: block.timestamp,
             isActive: true
         });
-        
-        users[msg.sender].totalContributions++;
-        users[msg.sender].reputation += CONTENT_CREATION_REWARD;
-        
-        emit ContentCreated(contentCounter, msg.sender, _title, block.timestamp);
+
+        dappsOf[msg.sender].push(id);
+
+        emit DappRegistered(id, msg.sender, name, url, category, block.timestamp);
     }
-    
+
     /**
-     * @dev Upvote a content and reward the creator
-     * @param _contentId ID of the content to upvote
+     * @dev Activate / deactivate a dApp
      */
-    function upvoteContent(uint256 _contentId) external payable onlyRegistered contentExists(_contentId) {
-        require(!hasUpvoted[_contentId][msg.sender], "Already upvoted this content");
-        require(contents[_contentId].creator != msg.sender, "Cannot upvote own content");
-        require(msg.value > 0, "Must send reward with upvote");
-        
-        contents[_contentId].upvotes++;
-        contents[_contentId].rewards += msg.value;
-        hasUpvoted[_contentId][msg.sender] = true;
-        
-        users[contents[_contentId].creator].reputation += UPVOTE_REWARD;
-        
-        payable(contents[_contentId].creator).transfer(msg.value);
-        
-        emit ContentUpvoted(_contentId, msg.sender, block.timestamp);
-        emit RewardSent(_contentId, contents[_contentId].creator, msg.value);
+    function setDappActive(uint256 id, bool active)
+        external
+        dappExists(id)
+        onlyDeveloper(id)
+    {
+        dapps[id].isActive = active;
+        emit DappStatusUpdated(id, active, block.timestamp);
     }
-    
+
     /**
-     * @dev Get content details
-     * @param _contentId ID of the content
+     * @dev Rate a dApp with score in [1,5]. Re-rating overwrites previous rating.
      */
-    function getContent(uint256 _contentId) external view contentExists(_contentId) returns (
-        uint256 id,
-        address creator,
-        string memory title,
-        string memory contentHash,
-        uint256 timestamp,
-        uint256 upvotes,
-        uint256 rewards
-    ) {
-        Content memory content = contents[_contentId];
-        return (
-            content.id,
-            content.creator,
-            content.title,
-            content.contentHash,
-            content.timestamp,
-            content.upvotes,
-            content.rewards
-        );
+    function rateDapp(uint256 id, uint8 rating)
+        external
+        dappExists(id)
+    {
+        require(dapps[id].isActive, "Inactive dApp");
+        require(rating >= 1 && rating <= 5, "Rating 1-5");
+
+        RatingStats storage stats = ratings[id];
+        uint8 prev = userRating[msg.sender][id];
+
+        if (prev == 0) {
+            // first rating
+            stats.ratingCount += 1;
+            stats.ratingSum += rating;
+        } else {
+            // update rating
+            stats.ratingSum = stats.ratingSum - prev + rating;
+        }
+
+        userRating[msg.sender][id] = rating;
+
+        emit DappRated(id, msg.sender, rating, stats.ratingCount, stats.ratingSum);
     }
-    
+
     /**
-     * @dev Get user details
-     * @param _user Address of the user
+     * @dev View: average rating *scaled* by 1e2 (2 decimals) to avoid floating point
      */
-    function getUser(address _user) external view returns (
-        address userAddress,
-        uint256 reputation,
-        uint256 totalContributions,
-        bool isRegistered
-    ) {
-        User memory user = users[_user];
-        return (
-            user.userAddress,
-            user.reputation,
-            user.totalContributions,
-            user.isRegistered
-        );
+    function getAverageRating(uint256 id)
+        external
+        view
+        dappExists(id)
+        returns (uint256 avgTimes100)
+    {
+        RatingStats memory s = ratings[id];
+        if (s.ratingCount == 0) return 0;
+        avgTimes100 = (s.ratingSum * 100) / s.ratingCount;
+    }
+
+    /**
+     * @dev Get all dApp IDs by a developer
+     */
+    function getDappsOf(address developer) external view returns (uint256[] memory) {
+        return dappsOf[developer];
+    }
+
+    /**
+     * @dev Transfer contract ownership
+     */
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Zero address");
+        address prev = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(prev, newOwner);
     }
 }
-// 
-End
-// 
